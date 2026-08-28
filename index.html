@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Galaxy — 3D Satellite View</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #020308; }
+    body { color: #eef3ff; }
+    #app { position: relative; width: 100%; height: 100%; }
+    canvas { display: block; }
+    .hud { position: absolute; inset: 0; pointer-events: none; }
+    .topbar { position: absolute; top: 22px; left: 24px; right: 24px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .brand { display: flex; align-items: center; gap: 11px; }
+    .brand-mark { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 10px 35px rgba(0,0,0,.35); }
+    .brand-mark::before { content: "✦"; font-size: 18px; }
+    .brand h1 { margin: 0; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; }
+    .brand p { margin: 4px 0 0; color: #9da8bd; font-size: 12px; }
+    .panel { background: rgba(7,11,20,.72); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border: 1px solid rgba(255,255,255,.10); border-radius: 16px; box-shadow: 0 15px 60px rgba(0,0,0,.32); pointer-events: auto; }
+    .controls { position: absolute; right: 24px; bottom: 24px; padding: 14px; width: 260px; }
+    .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: #8e9ab0; margin-bottom: 10px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; }
+    .row span { font-size: 12px; color: #dfe6f4; }
+    .btns { display: flex; gap: 8px; }
+    button { border: 1px solid rgba(255,255,255,.11); background: rgba(255,255,255,.05); color: #edf2ff; border-radius: 10px; padding: 9px 11px; font: inherit; font-size: 12px; cursor: pointer; transition: .2s ease; }
+    button:hover { background: rgba(255,255,255,.11); transform: translateY(-1px); }
+    button.active { background: rgba(112, 154, 255, .19); border-color: rgba(112,154,255,.46); }
+    input[type="range"] { width: 118px; accent-color: #7da2ff; }
+    .legend { position: absolute; left: 24px; bottom: 24px; padding: 14px 16px; min-width: 205px; }
+    .legend-item { display: flex; align-items: center; gap: 9px; margin: 8px 0; font-size: 12px; color: #c6cfdf; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 11px currentColor; }
+    .status { position: absolute; top: 78px; right: 24px; display: flex; align-items: center; gap: 8px; padding: 8px 11px; border-radius: 999px; background: rgba(7,11,20,.56); border: 1px solid rgba(255,255,255,.09); color: #aeb9cd; font-size: 11px; }
+    .status i { width: 7px; height: 7px; border-radius: 50%; background: #5cff9d; box-shadow: 0 0 12px #5cff9d; }
+    .hint { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); color: #758197; font-size: 11px; letter-spacing: .02em; }
+    @media (max-width: 720px) {
+      .topbar { top: 14px; left: 14px; right: 14px; }
+      .status { top: 65px; right: 14px; }
+      .controls { right: 14px; bottom: 14px; width: 230px; }
+      .legend { left: 14px; bottom: 14px; min-width: 165px; }
+      .hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div class="hud">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div>
+          <h1>Galaxy / Satellite View</h1>
+          <p>Interactive 3D orbital scene</p>
+        </div>
+      </div>
+    </div>
+    <div class="status"><i></i><span id="statusText">LIVE ORBIT SIMULATION</span></div>
+    <div class="panel legend">
+      <div class="panel-title">Telemetry</div>
+      <div class="legend-item"><span class="dot" style="color:#7da2ff;background:#7da2ff"></span> Earth / target body</div>
+      <div class="legend-item"><span class="dot" style="color:#ffffff;background:#ffffff"></span> Active satellite</div>
+      <div class="legend-item"><span class="dot" style="color:#8a65ff;background:#8a65ff"></span> Orbital path</div>
+    </div>
+    <div class="panel controls">
+      <div class="panel-title">Scene Controls</div>
+      <div class="row"><span>Orbit speed</span><input id="speed" type="range" min="0" max="2" step="0.05" value="0.65"></div>
+      <div class="row"><span>Camera</span><div class="btns"><button id="orbitBtn" class="active">Orbit</button><button id="topBtn">Top</button></div></div>
+      <div class="row"><span>Labels</span><button id="labelBtn" class="active">Visible</button></div>
+    </div>
+    <div class="hint">Drag to rotate · Scroll to zoom · Double-click to reset</div>
+  </div>
+</div>
+<script type="module">
+  import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+  import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x020308, 0.00028);
+
+  const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.1, 5000);
+  camera.position.set(42, 31, 54);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.setClearColor(0x020308, 1);
+  document.getElementById('app').prepend(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.045;
+  controls.minDistance = 16;
+  controls.maxDistance = 180;
+  controls.target.set(0, 0, 0);
+
+  const ambient = new THREE.AmbientLight(0x6373a8, 0.42);
+  scene.add(ambient);
+  const sun = new THREE.DirectionalLight(0xffffff, 2.4);
+  sun.position.set(35, 28, 24);
+  scene.add(sun);
+  const rim = new THREE.PointLight(0x516fff, 50, 130, 2);
+  rim.position.set(-20, -8, -25);
+  scene.add(rim);
+
+  function makeStars(count, radiusMin, radiusMax) {
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const r = radiusMin + Math.random() * (radiusMax - radiusMin);
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(THREE.MathUtils.randFloatSpread(2));
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.cos(phi);
+      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({ color: 0xcdd8ff, size: 0.42, sizeAttenuation: true, transparent: true, opacity: .78 });
+    return new THREE.Points(geo, mat);
+  }
+  scene.add(makeStars(7000, 250, 1600));
+
+  const earthGroup = new THREE.Group();
+  scene.add(earthGroup);
+
+  const earth = new THREE.Mesh(
+    new THREE.SphereGeometry(12, 96, 96),
+    new THREE.MeshStandardMaterial({ color: 0x1f5fd1, roughness: .88, metalness: .05, emissive: 0x061327, emissiveIntensity: .42 })
+  );
+  earthGroup.add(earth);
+
+  const atmosphere = new THREE.Mesh(
+    new THREE.SphereGeometry(12.35, 72, 72),
+    new THREE.MeshBasicMaterial({ color: 0x6da7ff, transparent: true, opacity: .12, side: THREE.BackSide, blending: THREE.AdditiveBlending, depthWrite: false })
+  );
+  earthGroup.add(atmosphere);
+
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xf4f7ff, transparent: true, opacity: .21, blending: THREE.AdditiveBlending, depthWrite: false });
+  const cloudGeo = new THREE.SphereGeometry(12.12, 48, 48);
+  const clouds = new THREE.Mesh(cloudGeo, cloudMat);
+  earthGroup.add(clouds);
+
+  const ringGeometry = new THREE.RingGeometry(17.7, 18.0, 160);
+  const ringMaterial = new THREE.MeshBasicMaterial({ color: 0x6178ff, transparent: true, opacity: .12, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+  const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+  ring.rotation.x = Math.PI / 2;
+  earthGroup.add(ring);
+
+  function orbitLine(radius, yScale, tilt, color, opacity) {
+    const pts = [];
+    for (let i = 0; i <= 256; i++) {
+      const a = (i / 256) * Math.PI * 2;
+      const p = new THREE.Vector3(Math.cos(a) * radius, Math.sin(a) * radius * yScale, 0);
+      p.applyAxisAngle(new THREE.Vector3(1, 0, 0), tilt);
+      pts.push(p);
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    return new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+  }
+  const orbitA = orbitLine(22, .62, THREE.MathUtils.degToRad(27), 0x7d68ff, .48);
+  const orbitB = orbitLine(28, .36, THREE.MathUtils.degToRad(-18), 0x6077ff, .22);
+  const orbitC = orbitLine(34, .78, THREE.MathUtils.degToRad(55), 0x886dff, .17);
+  earthGroup.add(orbitA, orbitB, orbitC);
+
+  const satellite = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.55, 1.05, 1.0), new THREE.MeshStandardMaterial({ color: 0xbfc8d8, metalness: .78, roughness: .34 });
+  satellite.add(body);
+  const panelMat = new THREE.MeshStandardMaterial({ color: 0x273b87, metalness: .38, roughness: .42, emissive: 0x09133d, emissiveIntensity: .9 });
+  const panelGeo = new THREE.BoxGeometry(3.35, .12, 1.42);
+  const leftPanel = new THREE.Mesh(panelGeo, panelMat); leftPanel.position.x = -2.35;
+  const rightPanel = new THREE.Mesh(panelGeo, panelMat); rightPanel.position.x = 2.35;
+  satellite.add(leftPanel, rightPanel);
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(.055, .055, 2.1, 16), new THREE.MeshStandardMaterial({ color: 0xf4f7ff, metalness: .45, roughness: .25 }));
+  antenna.rotation.z = Math.PI / 2;
+  antenna.position.y = 1.02;
+  satellite.add(antenna);
+  const signal = new THREE.Mesh(new THREE.SphereGeometry(.11, 20, 20), new THREE.MeshBasicMaterial({ color: 0x8cf5ff }));
+  signal.position.set(0, 1.95, 0);
+  satellite.add(signal);
+  earthGroup.add(satellite);
+
+  const labelCanvas = document.createElement('canvas');
+  labelCanvas.width = 480; labelCanvas.height = 120;
+  const ctx = labelCanvas.getContext('2d');
+  ctx.fillStyle = 'rgba(3,7,16,.88)'; ctx.roundRect(8, 8, 464, 104, 18); ctx.fill();
+  ctx.font = '700 28px Inter, Arial'; ctx.fillStyle = '#ffffff'; ctx.fillText('SAT-01  /  ORBITAL LINK', 26, 50);
+  ctx.font = '500 20px Inter, Arial'; ctx.fillStyle = '#9ba8bf'; ctx.fillText('Altitude  540 km     •     Status  nominal', 26, 84);
+  const labelTex = new THREE.CanvasTexture(labelCanvas);
+  const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthWrite: false }));
+  label.scale.set(18, 4.5, 1);
+  label.position.set(0, 7, 0);
+  satellite.add(label);
+
+  const axes = new THREE.GridHelper(120, 30, 0x25304b, 0x151c2d);
+  axes.position.y = -14.5;
+  axes.material.transparent = true;
+  axes.material.opacity = .11;
+  scene.add(axes);
+
+  let speed = .65;
+  let topMode = false;
+  let labelsVisible = true;
+  const orbitBtn = document.getElementById('orbitBtn');
+  const topBtn = document.getElementById('topBtn');
+  const labelBtn = document.getElementById('labelBtn');
+  document.getElementById('speed').addEventListener('input', e => speed = Number(e.target.value));
+  orbitBtn.onclick = () => { topMode = false; orbitBtn.classList.add('active'); topBtn.classList.remove('active'); controls.enabled = true; };
+  topBtn.onclick = () => { topMode = true; topBtn.classList.add('active'); orbitBtn.classList.remove('active'); controls.enabled = false; camera.position.set(0, 62, 0.01); camera.lookAt(0,0,0); };
+  labelBtn.onclick = () => { labelsVisible = !labelsVisible; label.visible = labelsVisible; labelBtn.classList.toggle('active', labelsVisible); labelBtn.textContent = labelsVisible ? 'Visible' : 'Hidden'; };
+
+  const clock = new THREE.Clock();
+  const defaultCam = new THREE.Vector3(42,31,54);
+  renderer.domElement.addEventListener('dblclick', () => { topMode = false; orbitBtn.click(); camera.position.copy(defaultCam); controls.target.set(0,0,0); });
+
+  function animate() {
+    requestAnimationFrame(animate);
+    const dt = clock.getDelta();
+    const t = clock.elapsedTime;
+    earth.rotation.y += dt * .045;
+    clouds.rotation.y += dt * .058;
+    earthGroup.rotation.y += dt * speed * .16;
+    const a = t * speed * .72;
+    satellite.position.set(Math.cos(a) * 22, Math.sin(a) * 22 * .62, 0);
+    satellite.position.applyAxisAngle(new THREE.Vector3(1,0,0), THREE.MathUtils.degToRad(27));
+    satellite.rotation.y += dt * 1.1;
+    signal.scale.setScalar(1 + Math.sin(t * 4.5) * .12);
+    if (!topMode) controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+</script>
+</body>
+</html>
